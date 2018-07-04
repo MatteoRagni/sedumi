@@ -1,9 +1,6 @@
-function install_sedumi( varargin )
+function install_sedumi(nopath)
 
 %SeDuMi installation script
-%
-% Heavy rewrite by Michael C. Grant for SeDuMi 1.34
-% Now detects if binaries are already 
 %
 % This file is part of SeDuMi 1.1 by Imre Polik and Oleksandr Romanko
 % Copyright (C) 2005 McMaster University, Hamilton, CANADA  (since 1.1)
@@ -34,9 +31,6 @@ function install_sedumi( varargin )
 % Foundation, Inc.,  51 Franklin Street, Fifth Floor, Boston, MA
 % 02110-1301, USA
 
-need_rebuild = any( strcmp( varargin, '-rebuild' ) );
-no_path = any( strcmp( varargin, '-nopath' ) );
-
 targets64={...
     'bwblkslv.c sdmauxFill.c sdmauxRdot.c',...
     'choltmpsiz.c',...
@@ -45,6 +39,7 @@ targets64={...
     'symfctmex.c symfct.c',...
     'ordmmdmex.c ordmmd.c',...
     'quadadd.c',...
+    'eigK.c sdmauxCone.c sdmauxRdot.c',...
     'sqrtinv.c sdmauxCone.c',...
     'givensrot.c auxgivens.c sdmauxCone.c',...
     'urotorder.c auxgivens.c sdmauxCone.c sdmauxTriu.c sdmauxRdot.c',...
@@ -59,7 +54,9 @@ targets64={...
     'qrK.c sdmauxCone.c sdmauxRdot.c sdmauxScalarmul.c',...
     'finsymbden.c sdmauxCmp.c',...
     'symbfwblk.c',...
+    'statsK.c sdmauxCone.c',...
     'whichcpx.c sdmauxCone.c',...
+    'eyeK.c sdmauxCone.c',...
     'ddot.c sdmauxCone.c sdmauxRdot.c sdmauxScalarmul.c',...
     'makereal.c sdmauxCone.c sdmauxCmp.c',...
     'partitA.c sdmauxCmp.c',...
@@ -78,201 +75,69 @@ targets64={...
     'invcholfac.c triuaux.c sdmauxCone.c sdmauxRdot.c sdmauxTriu.c sdmauxScalarmul.c blkaux.c',...
     };
 
-fs = filesep;
-mpath = mfilename('fullpath');
-mpath = mpath( 1 : max([1,strfind(mpath,fs)]) - 1 );
-ISOCTAVE = exist('OCTAVE_VERSION','builtin');
-VERSION  = [1,0.01]*sscanf(version,'%d.%d');
-if ISOCTAVE, prog = 'Octave'; else prog = 'Matlab'; end
+disp( 'Building SeDuMi binaries...' )
 COMPUTER = computer;
-mext = mexext;
+VERSION  = sscanf(version,'%d.%d');
+IS64BIT  = strcmp(COMPUTER(end-1:end),'64');
+flags{1} = '-O';
 
-%
-% We don't want to rebuild the binaries if they're already present, unless
-% the user has specifically asked for a rebuild. Frankly, we can't
-% guarantee that rebuilding will work.
-%
-
-if ISOCTAVE,
-    page_output_immediately( true, 'local' );
+if ispc
+    flags{end+1} = '-DPC';
+elseif isunix
+    flags{end+1} = '-DUNIX';
 end
 
-line = '---------------------------------------------------------------------------';
-fprintf( '\n%s\nSeDuMi installation script\n   Directory: %s\n   %s %s on %s\n%s\n', ...
-    line, mpath, prog, version, COMPUTER, line );
-
-if ~need_rebuild,
-    fprintf( 'Looking for existing binaries...' );
-    mdir = '';
-    if ISOCTAVE && VERSION >= 4,
-        switch computer,
-        case 'i686-w64-mingw32', mdir = 'o_win';
-        otherwise, mdir='';
-        end
-        if ~isempty(mdir) && ~exist( [ mpath, fs, mdir ], 'dir' ),
-            mdir = '';
-        end
+if IS64BIT
+    if (VERSION(1) > 7) || ((VERSION(1)>=7) && (VERSION(2)>=3))
+        flags{end+1} = '-largeArrayDims';
+    else 
+        flags{end+1} = '-DmwIndex=int';
+        flags{end+1} = '-DmwSize=int';
+        flags{end+1} = '-DmwSignedIndex=int';
     end
-    nfound = [ 0, 0 ];
-    for k = 1 : length(targets64),
-        targ = targets64{k};
-        targ = [ targ(1:min(strfind(targ,'.'))), mext ];
-        if exist( [ mpath, fs, targ ], 'file' ),
-            nfound(1) = nfound(1) + 1;
-        elseif ~isempty(mdir) && exist( [ mpath, fs, mdir, fs, targ ], 'file' ),
-            nfound(2) = nfound(2) + 1;
-        end
-    end
-    if sum(nfound) == 0,
-        fprintf( 'none found; building...\n' );
-        need_rebuild = true;
-    elseif sum(nfound) < length(targets64),
-        fprintf( 'incomplete set found.\n' );
-        disp( line );
-        disp( 'Some of the binaries for this platform were found, but some' );
-        disp( 'were missing as well. This may mean your download was corrupt;' );
-        disp( 'consider downloading and unpacking SeDuMi again. Otherwise, to' );
-        disp( 'try rebuilding the MEX files yourself, run this command:' );
-        disp( '    install_sedumi -rebuild' );
-        fprintf( '%s\n\n', line );
-        return;
+end
+if ispc
+    if (VERSION(1) > 7) || ((VERSION(1)>=7) && (VERSION(2)>=5)) 
+        libval = 'blas';
     else
-        fprintf( 'found!\n' );
-        fprintf( '   If for some reason you need to rebuild the binaries, use this command:\n' );
-        if no_path,
-            fprintf( '      install_sedumi -nopath -rebuild\n' );
-        else
-            fprintf( '      install_sedumi -rebuild\n' );
-        end
+        libval = 'lapack';
     end
+    if IS64BIT
+        dirval = 'win64'; 
+    else
+        dirval = 'win32'; 
+    end
+    
+    libs = [ matlabroot, '\extern\lib\', dirval, '\microsoft\libmw', libval, '.lib' ];
+    
+    if ~exist( libs )
+        libs = [ matlabroot, '\extern\lib\', dirval, '\microsoft\msvc60\libmw', libval, '.lib' ];
+    end
+elseif (VERSION(1) > 7) || ((VERSION(1)>=7) && (VERSION(2)>=5))
+    libs = '-lmwblas';
 else
-    nfound = [1,0];
+    libs = '-lmwlapack';
 end
 
-if need_rebuild,
-    disp( 'Attempting to recompile the SeDuMi binaries:' );
-    % Note the use of 0.01 here. That's because version 7 had more than 10
-    % minor releases, so 7.10-7.14 need to be ordered after 7.01-7.09.
-    IS64BIT  = ~ISOCTAVE & strcmp(COMPUTER(end-1:end),'64');
-    flags = {};
-    libs = {};
-    if ISOCTAVE,
-        % Octave has mwSize and mwIndex hardcoded in mex.h as ints.
-        % There is no definition for mwSignedIndex so include it here.  
-        % This means that Octave ignores the -largeArrayDims flag.
-        if VERSION < 3.08,
-            flags{end+1} = '-DmwSignedIndex=int';
-        end
-        flags{end+1} = '-O';
-        flags{end+1} = '-DOCTAVE';
-        libs{end+1} = '-lblas';
-    else
-        flags{end+1} = '-O';
-        if IS64BIT && ( VERSION >= 7.03 ),
-            flags{end+1} = '-largeArrayDims';
-        elseif VERSION < 7.03,
-            flags{end+1} = '-DmwIndex=int';
-            flags{end+1} = '-DmwSize=int';
-            flags{end+1} = '-DmwSignedIndex=int';
-        end
-        if VERSION >= 7 && ispc,
-            if IS64BIT, dirval = 'win64'; else dirval = 'win32'; end
-            libdir = [ matlabroot, fs, 'extern', fs, 'lib', fs, dirval, fs ];
-            if exist( [ libdir, 'microsoft' ], 'dir' ),
-                libdir = [ libdir, 'microsoft' ];
-                found = true;
-            elseif exist( [ libdir, 'msvc60' ], 'dir' ),
-                libdir = [ libdir, 'msvc60' ];
-                found = true;
-            elseif exist( [ libdir, 'lcc' ], 'dir' ),
-                libdir = [ libdir, 'lcc' ];
-                found = true;
-            end
-            if found,
-                libs{end+1} = [ '-L"', libdir, '"' ];
-            end
-        end
-        if VERSION >= 7.05,
-            libs{end+1} = '-lmwblas';
-        else
-            libs{end+1} = '-lmwlapack';
-        end
-    end
-    libs = sprintf( ' %s', libs{:} );
-    flags = sprintf( ' %s', flags{:} );
-    olddir = pwd;
-    cd( mpath );
-    failed = false;
-    fprintf( 'Template: mex%s <sources>%s\n', flags, libs );
-    for i=1:length(targets64),
-        targ = targets64{i};
-        mfile = [ targ(1:min(strfind(targ,'.'))), mext ];
-        temp = [ 'mex ', flags, ' ', targets64{i}, libs ];
-        fprintf( '   %s: %s\n', mfile, targ );
-        eval( temp, 'failed=true;' ); %#ok
-    end
-    cd( olddir );
-    if failed,
-        fprintf( 'At least one compilation failure occurred.\n' );
-        nfound = [0,0];
-    else
-        fprintf( 'Compilation successful.\n' );
-        nfound = [1,0];
-    end
+flags = sprintf( ' %s', flags{:} );
+
+for i=1:length(targets64)
+    temp =  [ 'mex ', flags, ' ', targets64{i}, ' "', libs ,'"'];
+    disp( temp );
+    eval( temp );
 end
+disp( 'Done!' )
 
-if ~any(nfound),
-    disp( line );
-    disp( 'SeDuMi was not successfully installed.' );
-    disp( 'Please attempt to correct the errors and try again.' );
-elseif ~no_path,
-    disp( line );
-    fprintf( 'Adding SeDuMi to the %s path:\n', prog );
-    ps = pathsep;
-    pp = [ ps, path, ps ];
-    already = true;
-    fprintf( '   Base directory...' );
-    if ~any(strfind(pp,[ps,mpath,ps])),
-        already = false;
-        pp = [ pp, mpath, ps ];
-        fprintf( 'added.\n' );
-    else
-        fprintf( 'already there.\n' );
-    end
-    if nfound(2),
-        fprintf( '   Binaries directory...' );
-        if nfound(2) && ~any(strfind(pp,[ps,mpath,fs,mdir,ps])),
-            already = false;
-            pp = [ pp, mpath, fs, mdir, ps ];
-            fprintf( 'added.\n' );
-        else
-            fprintf( 'already there.\n' );
-        end
-    end
-    fprintf( '   Conversion directory...' );
-    if ~any(strfind(pp,[ps,mpath,fs,'conversion',ps])),
-        already = false;
-        pp = [ pp, mpath, fs, 'conversion', ps ];
-        fprintf( 'added.\n' );
-    else
-        fprintf( 'already there.\n' );
-    end
-    fprintf( '   Examples directory...'  );
-    if ~any(strfind(pp,[ps,mpath,fs,'examples',ps])),
-        already = false;
-        pp = [ pp, mpath, fs, 'examples', ps ];
-        fprintf( 'added.\n' );
-    else
-        fprintf( 'already there.\n' );
-    end
-    if ~already,
-        path(pp);
-        fprintf( 'Please save the %s path if you want to use SeDuMi from any directory.\n', prog );
-    end
-    disp( line );
-    disp('SeDuMi has been succesfully installed.' );
-    disp( 'For more information, type "help sedumi" or see the user guide.')
+if nargin < 1
+    disp('Adding SeDuMi to the Matlab path')
+    path(path,pwd);
+    cd conversion
+    path(path,pwd);
+    cd ..
+    cd examples
+    path(path,pwd);
+    cd ..
+    disp('Please save the Matlab path if you want to use SeDuMi from any directory.');
+    disp('Go to File/Set Path and click on Save.');
+    disp('SeDuMi has been succesfully installed. For more information type help sedumi or see the User guide.')
 end
-
-fprintf('%s\n\n',line);
-
